@@ -20,22 +20,15 @@ class ByteCodeGen_X86_64 : public ByteCodeGen {
 	Assembler_X86_64 * _assembler_X86_64;
 
 	int _top;
-	int _maxStackRegs;
+	int _maxRegs;
 	const char * _stackRegs[16];
-	int _maxArgumentRegs;
-	const char * _argumentRegs[16];
 	u2 _max_stack;
 	u2 _max_locals;
 	u2 _max_args;
 	u4 _code_length;
+        u1* _branch_map;
 
 	Method * _method;
-
-	int _stackFrameArgs;
-	int _stackFrameCalleeSaved;
-	int _stackFrameLocalVars;
-	int _stackFRameJavaStack;
-	int _stackFrameEnd;
 
 public:
 	ByteCodeGen_X86_64(ClassClass * classClass);
@@ -43,9 +36,13 @@ public:
 	void codeGen();
 	void codeGenOne(ByteCode::Code code, u1 * codeArray, int k);
 	void notImplemented(ByteCode::Code code);
-	void restoreRegsBeforeReturn();
+        void restoreRegsBeforeReturn();
+  
+        char* generateBranchName(int k);
+        void setBranch(int k);
+        u1 needBranch(int k);
 
-	void pushVirtualStack();
+	void pushVirtalStack();
 	void popVirtualStack();
 	const char * getReg();
 };
