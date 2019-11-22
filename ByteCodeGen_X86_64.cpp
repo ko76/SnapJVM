@@ -142,7 +142,13 @@ ByteCodeGen_X86_64::codeGen()
 				_max_stack = _classParser->readU2(uptr);
 				_max_locals = _classParser->readU2(uptr);
 				_code_length = _classParser->readU4(uptr);
-
+				
+				/* Initializing branch map */
+				_branch_map = new u1[_code_length];
+				for(int i = 0; i < _code_length; i ++){
+				  _branch_map[i] = 0;
+				}
+				
 				_method->_maxStack = _max_stack;
 				_method->_maxLocals = _max_locals;
 
@@ -209,6 +215,12 @@ ByteCodeGen_X86_64::codeGen()
 					*_codeStrStream << "offset_" << k << ":\n";
 					ByteCode::Code c =  (ByteCode::Code) codeArray[k];
 
+					if(needBranch(k)){
+					  char* bname = generateBranchName(k);
+					  *_codeStrStream << bname << ":\n";
+					  free(bname);
+					}
+					
 					if (SnapJVMRuntime::isVerboseMode()) {
 						printf("         %d: %s ", k, ByteCode::_name[c]);
 						u2 flags = ByteCode::_flags[c];
@@ -1064,67 +1076,60 @@ void ByteCodeGen_X86_64::codeGenOne(ByteCode::Code code, u1 * codeArray, int k) 
           notImplemented(code);
         }
         break;
+    case ByteCode::_ifeq:
+    case ByteCode::_ifne:
+    case ByteCode::_iflt:
+    case ByteCode::_ifge:
+    case ByteCode::_ifgt:
+    case ByteCode::_ifle:
 
-    case ByteCode::_ifeq:{
-          notImplemented(code);
-        }
-        break;
-
-    case ByteCode::_ifne:{
-          notImplemented(code);
-        }
-        break;
-
-    case ByteCode::_iflt:{
-          notImplemented(code);
-        }
-        break;
-
-    case ByteCode::_ifge:{
-          notImplemented(code);
-        }
-        break;
-
-    case ByteCode::_ifgt:{
-          notImplemented(code);
-        }
-        break;
-
-    case ByteCode::_ifle:{
-          notImplemented(code);
-        }
-        break;
-
-    case ByteCode::_if_icmpeq:{
-          notImplemented(code);
-        }
-        break;
-
-    case ByteCode::_if_icmpne:{
-          notImplemented(code);
-        }
-        break;
-
-    case ByteCode::_if_icmplt:{
-          notImplemented(code);
-        }
-        break;
-
-    case ByteCode::_if_icmpge:{
-          notImplemented(code);
-        }
-        break;
-
-    case ByteCode::_if_icmpgt:{
-          notImplemented(code);
-        }
-        break;
-
+    case ByteCode::_if_icmpeq:
+    case ByteCode::_if_icmpne:
+    case ByteCode::_if_icmplt:
+    case ByteCode::_if_icmpge:
+    case ByteCode::_if_icmpgt:
     case ByteCode::_if_icmple:{
-          notImplemented(code);
+      int cmp_to_zero = code < ByteCode::_if_icmpeq ? 1 : 0;
+      int offset = code - (cmp_to_zero ? ByteCode::_ifeq : ByteCode::_if_icmpeq);
+      std::string cmpflag = "";
+      if(offset == 0){
+	cmpflag = "e";
+      }else if(offset == 1){
+	cmpflag = "ne";
+      }else if(offset == 2){
+	cmpflag = "l";
+      }else if(offset == 3){
+	cmpflag = "ge";
+      }else if(offset == 4){
+	cmpflag = "g";
+      }else if(offset == 5){
+	cmpflag = "le";
+      }
+      
+      
+      //compare the twop two values on the operand stack; if succeeds, jump to the address
+      u1 * p = &codeArray[k+1];
+      u2 arg = ClassParser::readU2(p) + k;
+      *this->_codeStrStream << "       #"
+			    << ByteCode::_name[code] << " #"<< std::dec << (int) arg <<"\n";
+      //compare the top two numbers in the operand stack
+      *this->_codeStrStream << "       movq %rcx, %" << getReg() << "\n";
+      popVirtualStack();
+      if(cmp_to_zero){
+	*this->_codeStrStream << "       cmpq %rcx, $0\n";
+      }else{
+	*this->_codeStrStream << "       movq %rdx, %" << getReg() << "\n";
+	popVirtualStack();
+	*this->_codeStrStream << "       cmpq %rcx, %rdx\n";
+      }
+      char* bname = generateBranchName(arg);
+      *this->_codeStrStream << "       j" << cmpflag << " " << bname << "\n";
+      free(bname);
+      setBranch(arg);
+      
+      
         }
         break;
-
     case ByteCode::_if_acmpeq:{
           notImplemented(code);
         }
@@ -1136,7 +1141,14 @@ void ByteCodeGen_X86_64::codeGenOne(ByteCode::Code code, u1 * codeArray, int k) 
         break;
 
     case ByteCode::_goto:{
-          notImplemented(code);
+      u1 * p = &codeArray[k+1];
+      u2 arg = ClassParser::readU2(p) + k;
+      *this->_codeStrStream << "       #"
+			    << ByteCode::_name[code] << " #"<< std::dec << (int) arg <<"\n";
+      char* bname = generateBranchName(arg);
+      *this->_codeStrStream << "       jmp " << bname << "\n";
+      free(bname);
+      setBranch(arg);
         }
         break;
 
@@ -1330,6 +1342,25 @@ void ByteCodeGen_X86_64::codeGenOne(ByteCode::Code code, u1 * codeArray, int k) 
 	}
 }
 
+/**
+ * helping function that generates name of a branch according to k;
+ * string returned needs to be freed
+ */
+char* ByteCodeGen_X86_64::generateBranchName(int k){
+  char buf[32];
+  sprintf(buf, "branch_%d", k);
+  return strdup(buf);
+}
+
+void ByteCodeGen_X86_64::setBranch(int k){
+  this->_branch_map[k] = 1;
+}
+
+u1 ByteCodeGen_X86_64::needBranch(int k){
+  return this->_branch_map[k];
+}
+
+
 void
 ByteCodeGen_X86_64::notImplemented(ByteCode::Code code)
 {
@@ -1339,7 +1370,3 @@ ByteCodeGen_X86_64::notImplemented(ByteCode::Code code)
 		printf("ByteCodeGen_X86_64:Not implemented \"%s\"\n", ByteCode::_name[code]);
 	}
 }
-
-
-
-
